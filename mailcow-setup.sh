@@ -101,7 +101,15 @@ detect_compose() {
 
 # ── read marker ───────────────────────────────────────────────────────────────
 load_marker() {
-    [ -f "$MARKER_FILE" ] && source "$MARKER_FILE" || true
+    [ -f "$MARKER_FILE" ] || return 0
+
+    if ! source "$MARKER_FILE" 2>/dev/null; then
+        # Backward compatibility: fix older marker format with unquoted compose command.
+        if grep -q '^COMPOSE_CMD=docker compose$' "$MARKER_FILE" 2>/dev/null; then
+            sed -i 's|^COMPOSE_CMD=docker compose$|COMPOSE_CMD="docker compose"|' "$MARKER_FILE"
+            source "$MARKER_FILE" 2>/dev/null || true
+        fi
+    fi
 }
 
 # ── generate random secrets (safe with set -euo pipefail) ───────────────────
@@ -249,7 +257,17 @@ error() { echo -e "${R}[ERROR]${N} $*"; }
 die()   { error "$*"; exit 1; }
 hr()    { echo -e "${C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"; }
 
-load_marker() { [ -f "$MARKER_FILE" ] && source "$MARKER_FILE" || true; }
+load_marker() {
+    [ -f "$MARKER_FILE" ] || return 0
+
+    if ! source "$MARKER_FILE" 2>/dev/null; then
+        # Backward compatibility: fix older marker format with unquoted compose command.
+        if grep -q '^COMPOSE_CMD=docker compose$' "$MARKER_FILE" 2>/dev/null; then
+            sed -i 's|^COMPOSE_CMD=docker compose$|COMPOSE_CMD="docker compose"|' "$MARKER_FILE"
+            source "$MARKER_FILE" 2>/dev/null || true
+        fi
+    fi
+}
 detect_compose() {
     if docker compose version &>/dev/null 2>&1; then echo "docker compose"
     elif command -v docker-compose &>/dev/null; then echo "docker-compose"
@@ -1059,7 +1077,7 @@ MAILCOW_IPV6=${MAILCOW_IPV6}
 SKIP_CLAMD=${SKIP_CLAMD}
 SERVER_IP=${SERVER_IP}
 INSTALL_DIR=${INSTALL_DIR}
-COMPOSE_CMD=${COMPOSE}
+COMPOSE_CMD="${COMPOSE}"
 MC_ADMIN_USER=${MC_ADMIN_USER}
 MC_ADMIN_PASS=${MC_ADMIN_PASS}
 MC_API_KEY=${MC_API_KEY}
