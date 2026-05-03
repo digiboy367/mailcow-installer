@@ -45,8 +45,30 @@ load_marker() {
     [ -f "$MARKER_FILE" ] && source "$MARKER_FILE" || true
 }
 
-# ── generate random password ──────────────────────────────────────────────────
-gen_pass() { tr -dc 'A-Za-z0-9!#%&*+=' </dev/urandom | head -c "${1:-24}"; }
+# ── generate random secrets (safe with set -euo pipefail) ───────────────────
+gen_pass() {
+    python3 - "${1:-24}" <<'PY'
+import secrets
+import string
+import sys
+
+length = int(sys.argv[1])
+alphabet = string.ascii_letters + string.digits + "!#%&*+="
+print(''.join(secrets.choice(alphabet) for _ in range(length)), end='')
+PY
+}
+
+gen_token() {
+    python3 - "${1:-32}" <<'PY'
+import secrets
+import string
+import sys
+
+length = int(sys.argv[1])
+alphabet = string.ascii_letters + string.digits
+print(''.join(secrets.choice(alphabet) for _ in range(length)), end='')
+PY
+}
 
 # =============================================================================
 #  MANAGER SCRIPT  (written to /usr/local/bin/mailcow)
@@ -149,7 +171,12 @@ generate_api_key() {
     local COMPOSE key
     COMPOSE=$(detect_compose)
     cd "$INSTALL_DIR"
-    key=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
+    key=$(python3 - <<'PY'
+import secrets
+import string
+print(''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)), end='')
+PY
+)
     $COMPOSE exec -T mysql-mailcow mysql \
         -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
         -e "DELETE FROM api WHERE username='${MC_ADMIN_USER:-admin}'; \
@@ -834,7 +861,7 @@ CONF
     fi
 
     # ── generate API key ──────────────────────────────────────────────────────
-    MC_API_KEY=$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32)
+    MC_API_KEY=$(gen_token 32)
     $COMPOSE exec -T mysql-mailcow mysql \
         -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
         -e "DELETE FROM api WHERE username='${MC_ADMIN_USER}'; \
