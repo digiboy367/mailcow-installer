@@ -922,12 +922,28 @@ bootstrap() {
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
 
-    # Write self to /usr/local/bin/mailcow-setup-run so the manager can call it
+    # ── persist the script to disk so the manager and .bashrc hook can call it ──
     local SELF_PATH="/usr/local/bin/mailcow-setup-run"
-    if [ ! -f "$SELF_PATH" ] || ! diff -q "$0" "$SELF_PATH" &>/dev/null; then
-        cp "$0" "$SELF_PATH" 2>/dev/null || \
-            { cat > "$SELF_PATH" && chmod +x "$SELF_PATH"; } < "$0"
+    local SCRIPT_URL="https://raw.githubusercontent.com/digiboy367/mailcow-installer/refs/heads/main/mailcow-setup.sh"
+
+    if [ ! -f "$SELF_PATH" ]; then
+        log "Downloading installer to ${SELF_PATH} …"
+        if command -v curl &>/dev/null; then
+            curl -fsSL "$SCRIPT_URL" -o "$SELF_PATH" \
+                || die "Failed to download installer from $SCRIPT_URL"
+        elif command -v wget &>/dev/null; then
+            wget -qO "$SELF_PATH" "$SCRIPT_URL" \
+                || die "Failed to download installer from $SCRIPT_URL"
+        else
+            # Last resort: write ourselves via /proc/self/fd/0 is not available
+            # in a pipe, so install curl first then retry
+            apt-get install -y curl >>"$LOG_FILE" 2>&1 \
+                || die "curl/wget not found and could not be installed."
+            curl -fsSL "$SCRIPT_URL" -o "$SELF_PATH" \
+                || die "Failed to download installer."
+        fi
         chmod +x "$SELF_PATH"
+        log "Installer saved to $SELF_PATH"
     fi
 
     # Install manager, MOTD and .bashrc hook
