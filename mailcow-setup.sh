@@ -15,7 +15,7 @@ LOG_FILE="/var/log/mailcow-setup.log"
 MANAGER_BIN="/usr/local/bin/mailcow"
 MOTD_FILE="/etc/update-motd.d/99-mailcow"
 BASHRC_MARKER="# mailcow-auto-install-hook"
-SCRIPT_VERSION="2026.05.03.1"
+SCRIPT_VERSION="2026.05.03.2"
 SCRIPT_URL_BASE="https://raw.githubusercontent.com/digiboy367/mailcow-installer/main/mailcow-setup.sh"
 
 # ── colours ───────────────────────────────────────────────────────────────────
@@ -126,6 +126,49 @@ length = int(sys.argv[1])
 alphabet = string.ascii_letters + string.digits
 print(''.join(secrets.choice(alphabet) for _ in range(length)), end='')
 PY
+}
+
+domain_exists_sql() {
+    local compose_cmd="$1" db_user="$2" db_pass="$3" db_name="$4" domain="$5"
+    local out=""
+    out=$($compose_cmd exec -T mysql-mailcow mysql \
+        -N -s -u"${db_user}" -p"${db_pass}" "${db_name}" \
+        -e "SELECT domain FROM domain WHERE domain='${domain}' LIMIT 1;" \
+        2>>"$LOG_FILE" || true)
+    [ "$out" = "$domain" ]
+}
+
+add_domain_sql_fallback() {
+    local compose_cmd="$1" db_user="$2" db_pass="$3" db_name="$4" domain="$5"
+
+    # Variant 1: common Mailcow schema
+    $compose_cmd exec -T mysql-mailcow mysql \
+        -u"${db_user}" -p"${db_pass}" "${db_name}" \
+        -e "INSERT IGNORE INTO domain \
+            (domain,description,aliases,mailboxes,defquota,maxquota,quota,active,rl_value,rl_frame,backupmx,relay_all_recipients) \
+            VALUES \
+            ('${domain}','Primary domain',400,10,3072,10240,10240,1,10,'s',0,0);" \
+        >>"$LOG_FILE" 2>&1 || true
+    domain_exists_sql "$compose_cmd" "$db_user" "$db_pass" "$db_name" "$domain" && return 0
+
+    # Variant 2: schema including relay_unknown_only and gal
+    $compose_cmd exec -T mysql-mailcow mysql \
+        -u"${db_user}" -p"${db_pass}" "${db_name}" \
+        -e "INSERT IGNORE INTO domain \
+            (domain,description,aliases,mailboxes,defquota,maxquota,quota,active,rl_value,rl_frame,backupmx,relay_unknown_only,relay_all_recipients,gal) \
+            VALUES \
+            ('${domain}','Primary domain',400,10,3072,10240,10240,1,10,'s',0,0,0,1);" \
+        >>"$LOG_FILE" 2>&1 || true
+    domain_exists_sql "$compose_cmd" "$db_user" "$db_pass" "$db_name" "$domain" && return 0
+
+    # Variant 3: rely on database defaults if available
+    $compose_cmd exec -T mysql-mailcow mysql \
+        -u"${db_user}" -p"${db_pass}" "${db_name}" \
+        -e "INSERT IGNORE INTO domain (domain) VALUES ('${domain}');" \
+        >>"$LOG_FILE" 2>&1 || true
+    domain_exists_sql "$compose_cmd" "$db_user" "$db_pass" "$db_name" "$domain" && return 0
+
+    return 1
 }
 
 # =============================================================================
@@ -566,13 +609,10 @@ run_install() {
 
     # ── banner ───────────────────────────────────────────────────────────────
     clear
-    local BANNER_WIDTH=60
     echo ""
-    echo -e "${C}╔$(printf '%*s' "$BANNER_WIDTH" '' | tr ' ' '═')╗${N}"
-    printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "✉  Mailcow Dockerized Setup Wizard"
-    printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "github.com/digiboy367/mailcow-installer"
-    printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "Version ${SCRIPT_VERSION}"
-    echo -e "${C}╚$(printf '%*s' "$BANNER_WIDTH" '' | tr ' ' '═')╝${N}"
+    echo -e "${M}✉  Mailcow Dockerized Setup Wizard${N}"
+    echo -e "${C}github.com/digiboy367/mailcow-installer${N}"
+    echo -e "${B}Version ${SCRIPT_VERSION}${N}"
     echo ""
 
     # ── already installed? ───────────────────────────────────────────────────
@@ -938,26 +978,18 @@ CONF
             log "Domain ${MAIL_DOMAIN} added."
         else
             warn "Domain API add failed, trying SQL fallback."
-            $COMPOSE exec -T mysql-mailcow mysql \
-                -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
-                -e "INSERT IGNORE INTO domain \
-                    (domain,description,aliases,mailboxes,defquota,maxquota,quota,active,rl_value,rl_frame,backupmx,relay_all_recipients) \
-                    VALUES \
-                    ('${MAIL_DOMAIN}','Primary domain',400,10,3072,10240,10240,1,10,'s',0,0);" \
-                >>"$LOG_FILE" 2>&1 \
+            add_domain_sql_fallback "$COMPOSE" "$DBUSER" "$DBPASS" "$DBNAME" "$MAIL_DOMAIN" \
                 && log "Domain ${MAIL_DOMAIN} added via SQL fallback." \
                 || warn "Domain add failed. Response: ${domain_resp}"
         fi
     else
-        $COMPOSE exec -T mysql-mailcow mysql \
-            -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
-            -e "INSERT IGNORE INTO domain \
-                (domain,description,aliases,mailboxes,defquota,maxquota,quota,active,rl_value,rl_frame,backupmx,relay_all_recipients) \
-                VALUES \
-                ('${MAIL_DOMAIN}','Primary domain',400,10,3072,10240,10240,1,10,'s',0,0);" \
-            >>"$LOG_FILE" 2>&1 \
+        add_domain_sql_fallback "$COMPOSE" "$DBUSER" "$DBPASS" "$DBNAME" "$MAIL_DOMAIN" \
             && log "Domain ${MAIL_DOMAIN} added via SQL fallback." \
             || warn "Skipping domain add (API key unavailable and SQL fallback failed)."
+    fi
+
+    if ! domain_exists_sql "$COMPOSE" "$DBUSER" "$DBPASS" "$DBNAME" "$MAIL_DOMAIN"; then
+        warn "Domain ${MAIL_DOMAIN} is still missing after install attempts. Check $LOG_FILE for SQL/API errors."
     fi
 
     # ── write marker ──────────────────────────────────────────────────────────
@@ -1004,18 +1036,16 @@ EOF
     echo ""
 
     # ── final summary ─────────────────────────────────────────────────────────
-    echo -e "${G}╔══════════════════════════════════════════════════════╗${N}"
-    echo -e "${G}║${N}   ${Y}✓  Mailcow installation complete!${N}                ${G}║${N}"
-    echo -e "${G}╠══════════════════════════════════════════════════════╣${N}"
-    echo -e "${G}║${N}  Hostname  : ${Y}${MAILCOW_HOSTNAME}${N}"
-    echo -e "${G}║${N}  Domain    : ${Y}${MAIL_DOMAIN}${N}"
-    echo -e "${G}║${N}  Admin     : ${Y}${MC_ADMIN_USER}${N}"
-    echo -e "${G}║${N}  Password  : ${Y}${MC_ADMIN_PASS}${N}"
-    echo -e "${G}╠══════════════════════════════════════════════════════╣${N}"
-    echo -e "${G}║${N}  Web UI  : ${C}https://${MAILCOW_HOSTNAME}${N}"
-    echo -e "${G}╠══════════════════════════════════════════════════════╣${N}"
-    echo -e "${G}║${N}  Manage  : ${G}mailcow <status|update|logs|…>${N}"
-    echo -e "${G}╚══════════════════════════════════════════════════════╝${N}"
+    echo -e "${Y}✓ Mailcow installation complete!${N}"
+    echo ""
+    printf "  %-9s %s\n" "Hostname:" "${MAILCOW_HOSTNAME}"
+    printf "  %-9s %s\n" "Domain:"   "${MAIL_DOMAIN}"
+    printf "  %-9s %s\n" "Admin:"    "${MC_ADMIN_USER}"
+    printf "  %-9s %s\n" "Password:" "${MC_ADMIN_PASS}"
+    echo ""
+    echo -e "  User UI : ${C}https://${MAILCOW_HOSTNAME}${N}"
+    echo -e "  Admin UI : ${C}https://${MAILCOW_HOSTNAME}/admin${N}"
+    echo -e "  Manage : ${G}mailcow <status|update|logs|...>${N}"
     echo ""
     log "Installation finished."
 }
