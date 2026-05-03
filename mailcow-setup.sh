@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-#  Mailcow Setup & Manager  –  Pars.Host
-#  https://github.com/parshost/mailcow-setup
+#  Mailcow Setup & Manager
+#  https://github.com/digiboy367/mailcow-installer
 #
-#  curl -fsSL https://raw.githubusercontent.com/parshost/mailcow-setup/main/mailcow-setup.sh | bash
+#  curl -fsSL https://raw.githubusercontent.com/digiboy367/mailcow-installer/refs/heads/main/mailcow-setup.sh | bash
 # =============================================================================
 
 set -euo pipefail
@@ -55,7 +55,7 @@ install_manager() {
     log "Installing manager script at $MANAGER_BIN …"
     cat > "$MANAGER_BIN" <<'MANAGER'
 #!/bin/bash
-# Mailcow Manager – Pars.Host
+# Mailcow Manager
 # Usage: mailcow [command]
 
 MARKER_FILE="/etc/mailcow-installed"
@@ -325,7 +325,7 @@ cmd_logs() {
 cmd_help() {
     echo ""
     echo -e "${C}╔═══════════════════════════════════════════════╗${N}"
-    echo -e "${C}║          Mailcow Manager – Pars.Host          ║${N}"
+    echo -e "${C}║          Mailcow Manager          ║${N}"
     echo -e "${C}╚═══════════════════════════════════════════════╝${N}"
     echo ""
     echo -e "  ${Y}mailcow${N} ${G}<command>${N}"
@@ -371,7 +371,7 @@ if [ -f "$MARKER_FILE" ]; then
     source "$MARKER_FILE"
     echo ""
     echo -e "\033[0;36m╔══════════════════════════════════════════════════════╗\033[0m"
-    echo -e "\033[0;36m║\033[0m  \033[1;33m✉  Mailcow Mail Server\033[0m  –  \033[0;34mPars.Host\033[0m             \033[0;36m║\033[0m"
+    echo -e "\033[0;36m║\033[0m  \033[1;33m✉  Mailcow Mail Server\033[0m             \033[0;36m║\033[0m"
     echo -e "\033[0;36m╠══════════════════════════════════════════════════════╣\033[0m"
     printf "\033[0;36m║\033[0m  %-14s \033[0;33m%s\033[0m\n" "Hostname:"   "${MAILCOW_HOSTNAME:-n/a}"
     printf "\033[0;36m║\033[0m  %-14s \033[0;33m%s\033[0m\n" "Domain:"     "${MAIL_DOMAIN:-n/a}"
@@ -480,7 +480,7 @@ run_install() {
     echo ""
     echo -e "${C}╔══════════════════════════════════════════════════════╗${N}"
     echo -e "${C}║${N}   ${M}✉  Mailcow Dockerized Setup Wizard${N}               ${C}║${N}"
-    echo -e "${C}║${N}              ${B}Powered by Pars.Host${N}                  ${C}║${N}"
+    echo -e "${C}║${N}              ${B}github.com/digiboy367/mailcow-installer${N}                  ${C}║${N}"
     echo -e "${C}╚══════════════════════════════════════════════════════╝${N}"
     echo ""
 
@@ -852,7 +852,7 @@ CONF
 
     # ── write marker ──────────────────────────────────────────────────────────
     cat > "$MARKER_FILE" <<EOF
-# Mailcow Installation – Pars.Host
+# Mailcow Installation
 # Installed: $(date '+%Y-%m-%d %H:%M:%S')
 MAILCOW_HOSTNAME=${MAILCOW_HOSTNAME}
 MAIL_DOMAIN=${MAIL_DOMAIN}
