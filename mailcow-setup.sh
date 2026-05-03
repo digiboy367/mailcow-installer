@@ -15,7 +15,7 @@ LOG_FILE="/var/log/mailcow-setup.log"
 MANAGER_BIN="/usr/local/bin/mailcow"
 MOTD_FILE="/etc/update-motd.d/99-mailcow"
 BASHRC_MARKER="# mailcow-auto-install-hook"
-SCRIPT_VERSION="2026.05.03.2"
+SCRIPT_VERSION="2026.05.03.3"
 SCRIPT_URL_BASE="https://raw.githubusercontent.com/digiboy367/mailcow-installer/main/mailcow-setup.sh"
 
 # ── colours ───────────────────────────────────────────────────────────────────
@@ -1056,9 +1056,11 @@ EOF
 #  /usr/local/bin/mailcow-setup-run
 # =============================================================================
 bootstrap() {
-    # ── When invoked via  curl … | bash  stdin is the curl pipe, not the
-    #    terminal. Save the script to disk first, then re-exec from disk
-    #    with stdin bound to /dev/tty so interactive reads work.
+    # ── When invoked via  curl … | bash  (cloud-init / Virtualizor recipe)
+    #    stdin is the curl pipe — there is no /dev/tty.
+    #    In that case: save the script to disk, install infrastructure
+    #    (manager, MOTD, bashrc hook) and exit.  The interactive wizard
+    #    will launch automatically the first time an admin SSHes in.
     [ "$EUID" -eq 0 ] || die "Must run as root."
 
     mkdir -p "$(dirname "$LOG_FILE")"
@@ -1070,7 +1072,7 @@ bootstrap() {
 
     # ── save script to disk ─────────────────────────────────────────────
     if [ ! -f "$SELF_PATH" ]; then
-        echo -e "${B}[INFO]${N} Downloading installer to ${SELF_PATH} …"
+        log "Downloading installer to ${SELF_PATH} …"
         if command -v curl &>/dev/null; then
             curl -fsSL "$SCRIPT_URL" -o "$SELF_PATH" \
                 || die "Failed to download installer from $SCRIPT_URL"
@@ -1084,16 +1086,21 @@ bootstrap() {
                 || die "Failed to download installer."
         fi
         chmod +x "$SELF_PATH"
-        echo -e "${G}[OK]${N} Installer saved. Launching setup …"
-        echo ""
+        log "Installer saved to ${SELF_PATH}."
     fi
 
-    # ── if stdin is not a tty (piped), re-exec from disk with /dev/tty ─
+    # ── non-interactive (cloud-init / no tty): install infrastructure only ─
     if [ ! -t 0 ]; then
-        exec bash "$SELF_PATH" install </dev/tty
+        log "Non-interactive boot detected. Installing infrastructure …"
+        install_deps
+        install_manager
+        install_motd
+        install_bashrc_hook
+        log "Bootstrap complete. SSH in as root to run the setup wizard."
+        exit 0
     fi
 
-    # ── already on a tty (called from .bashrc hook) ─────────────────────
+    # ── interactive tty (called directly or from .bashrc hook) ──────────
     install_manager
     install_motd
     install_bashrc_hook
