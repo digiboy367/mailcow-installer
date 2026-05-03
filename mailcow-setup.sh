@@ -480,7 +480,7 @@ run_install() {
     echo ""
     echo -e "${C}╔══════════════════════════════════════════════════════╗${N}"
     echo -e "${C}║${N}   ${M}✉  Mailcow Dockerized Setup Wizard${N}               ${C}║${N}"
-    echo -e "${C}║${N}              ${B}github.com/digiboy367/mailcow-installer${N}                  ${C}║${N}"
+    echo -e "${C}║${N}     ${B}github.com/digiboy367/mailcow-installer${N}     ${C}║${N}"
     echo -e "${C}╚══════════════════════════════════════════════════════╝${N}"
     echo ""
 
@@ -500,9 +500,18 @@ run_install() {
     fi
 
     # ── get server IP ────────────────────────────────────────────────────────
-    SERVER_IP=$(curl -s --max-time 6 https://api4.my-ip.io/ip 2>/dev/null \
-        || curl -s --max-time 6 4.ident.me 2>/dev/null \
-        || hostname -I | awk '{print $1}')
+    info "Detecting server IP …"
+    SERVER_IP=""
+    for ip_url in \
+        "https://api4.my-ip.io/ip" \
+        "https://ipv4.icanhazip.com" \
+        "https://checkip.amazonaws.com" \
+        "https://4.ident.me"; do
+        SERVER_IP=$(curl -s --max-time 6 "$ip_url" 2>/dev/null | tr -d '[:space:]')
+        [[ "$SERVER_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] && break
+        SERVER_IP=""
+    done
+    [ -z "$SERVER_IP" ] && SERVER_IP=$(hostname -I | awk '{print $1}')
 
     # ─────────────────────────────────────────────────────────────────────────
     #  STEP 1 – HOSTNAME
@@ -916,18 +925,20 @@ EOF
 #  /usr/local/bin/mailcow-setup-run
 # =============================================================================
 bootstrap() {
-    # When called via curl | bash it self-installs, then runs the wizard
+    # ── When invoked via  curl … | bash  stdin is the curl pipe, not the
+    #    terminal. Save the script to disk first, then re-exec from disk
+    #    with stdin bound to /dev/tty so interactive reads work.
     [ "$EUID" -eq 0 ] || die "Must run as root."
 
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
 
-    # ── persist the script to disk so the manager and .bashrc hook can call it ──
     local SELF_PATH="/usr/local/bin/mailcow-setup-run"
     local SCRIPT_URL="https://raw.githubusercontent.com/digiboy367/mailcow-installer/refs/heads/main/mailcow-setup.sh"
 
+    # ── save script to disk ─────────────────────────────────────────────
     if [ ! -f "$SELF_PATH" ]; then
-        log "Downloading installer to ${SELF_PATH} …"
+        echo -e "${B}[INFO]${N} Downloading installer to ${SELF_PATH} …"
         if command -v curl &>/dev/null; then
             curl -fsSL "$SCRIPT_URL" -o "$SELF_PATH" \
                 || die "Failed to download installer from $SCRIPT_URL"
@@ -935,29 +946,36 @@ bootstrap() {
             wget -qO "$SELF_PATH" "$SCRIPT_URL" \
                 || die "Failed to download installer from $SCRIPT_URL"
         else
-            # Last resort: write ourselves via /proc/self/fd/0 is not available
-            # in a pipe, so install curl first then retry
             apt-get install -y curl >>"$LOG_FILE" 2>&1 \
                 || die "curl/wget not found and could not be installed."
             curl -fsSL "$SCRIPT_URL" -o "$SELF_PATH" \
                 || die "Failed to download installer."
         fi
         chmod +x "$SELF_PATH"
-        log "Installer saved to $SELF_PATH"
+        echo -e "${G}[OK]${N} Installer saved. Launching setup …"
+        echo ""
     fi
 
-    # Install manager, MOTD and .bashrc hook
+    # ── if stdin is not a tty (piped), re-exec from disk with /dev/tty ─
+    if [ ! -t 0 ]; then
+        exec bash "$SELF_PATH" install </dev/tty
+    fi
+
+    # ── already on a tty (called from .bashrc hook) ─────────────────────
     install_manager
     install_motd
     install_bashrc_hook
-
-    # Run the wizard
     run_install
 }
 
 # ── dispatch based on how script is invoked ───────────────────────────────────
 case "${1:-bootstrap}" in
-    install)   run_install ;;
+    install)
+        install_manager
+        install_motd
+        install_bashrc_hook
+        run_install
+        ;;
     bootstrap) bootstrap   ;;
     *)         bootstrap   ;;
 esac
