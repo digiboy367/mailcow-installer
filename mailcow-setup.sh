@@ -480,7 +480,7 @@ run_install() {
     echo ""
     echo -e "${C}╔══════════════════════════════════════════════════════╗${N}"
     echo -e "${C}║${N}   ${M}✉  Mailcow Dockerized Setup Wizard${N}               ${C}║${N}"
-    echo -e "${C}║${N}     ${B}github.com/digiboy367/mailcow-installer${N}     ${C}║${N}"
+    echo -e "${C}║${N}      github.com/digiboy367/mailcow-installer       ${C}║${N}"
     echo -e "${C}╚══════════════════════════════════════════════════════╝${N}"
     echo ""
 
@@ -498,6 +498,10 @@ run_install() {
         remove_bashrc_hook
         exit 0
     fi
+
+    # ── install deps first so curl is available for IP detection ────────────
+    hr; echo -e "${Y}  Installing dependencies …${N}"; hr
+    install_deps
 
     # ── get server IP ────────────────────────────────────────────────────────
     info "Detecting server IP …"
@@ -682,9 +686,6 @@ run_install() {
         [[ "$go" =~ ^[Nn]$ ]] && { info "Cancelled."; exit 0; }
     done
 
-    # ── install deps ─────────────────────────────────────────────────────────
-    hr; echo -e "${Y}  Installing dependencies …${N}"; hr
-    install_deps
 
     local COMPOSE
     COMPOSE=$(detect_compose)
