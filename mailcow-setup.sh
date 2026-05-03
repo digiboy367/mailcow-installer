@@ -3,7 +3,7 @@
 #  Mailcow Setup & Manager
 #  https://github.com/digiboy367/mailcow-installer
 #
-#  curl -fsSL https://raw.githubusercontent.com/digiboy367/mailcow-installer/refs/heads/main/mailcow-setup.sh | bash
+#  curl -fsSL "https://raw.githubusercontent.com/digiboy367/mailcow-installer/main/mailcow-setup.sh?nocache=$(date +%s)" | bash
 # =============================================================================
 
 set -euo pipefail
@@ -15,6 +15,8 @@ LOG_FILE="/var/log/mailcow-setup.log"
 MANAGER_BIN="/usr/local/bin/mailcow"
 MOTD_FILE="/etc/update-motd.d/99-mailcow"
 BASHRC_MARKER="# mailcow-auto-install-hook"
+SCRIPT_VERSION="2026.05.03.1"
+SCRIPT_URL_BASE="https://raw.githubusercontent.com/digiboy367/mailcow-installer/main/mailcow-setup.sh"
 
 # ── colours ───────────────────────────────────────────────────────────────────
 R='\033[0;31m'  G='\033[0;32m'  Y='\033[1;33m'
@@ -28,6 +30,49 @@ error() { echo -e "${R}[ERROR]${N} $*" | tee -a "$LOG_FILE"; }
 die()   { error "$*"; exit 1; }
 
 hr()    { echo -e "${C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"; }
+
+version_gt() {
+    local a="$1" b="$2"
+    [ "$a" = "$b" ] && return 1
+    [ "$(printf '%s\n%s\n' "$a" "$b" | sort -V | tail -n1)" = "$a" ]
+}
+
+self_update_from_github() {
+    local mode="${1:-bootstrap}"
+    local self_path="/usr/local/bin/mailcow-setup-run"
+    local remote_url="${SCRIPT_URL_BASE}?nocache=$(date +%s)"
+    local tmp remote_version
+
+    [ "$EUID" -eq 0 ] || return 0
+    mkdir -p "$(dirname "$LOG_FILE")"
+    touch "$LOG_FILE" 2>/dev/null || true
+
+    tmp="$(mktemp /tmp/mailcow-setup.XXXXXX 2>/dev/null || true)"
+    [ -n "$tmp" ] || return 0
+
+    if command -v curl &>/dev/null; then
+        curl -fsSL "$remote_url" -o "$tmp" 2>>"$LOG_FILE" || { rm -f "$tmp"; return 0; }
+    elif command -v wget &>/dev/null; then
+        wget -qO "$tmp" "$remote_url" || { rm -f "$tmp"; return 0; }
+    else
+        rm -f "$tmp"
+        return 0
+    fi
+
+    remote_version=$(grep -m1 '^SCRIPT_VERSION=' "$tmp" | sed -E 's/^SCRIPT_VERSION="([^"]+)"/\1/')
+    [ -n "$remote_version" ] || { rm -f "$tmp"; return 0; }
+
+    if version_gt "$remote_version" "$SCRIPT_VERSION"; then
+        info "New installer version available: ${remote_version} (current: ${SCRIPT_VERSION})"
+        cp -f "$tmp" "$self_path" 2>>"$LOG_FILE" || { rm -f "$tmp"; return 0; }
+        chmod +x "$self_path" 2>>"$LOG_FILE" || true
+        rm -f "$tmp"
+        info "Installer updated. Relaunching version ${remote_version} …"
+        exec bash "$self_path" "$mode"
+    fi
+
+    rm -f "$tmp"
+}
 
 install_self_runner() {
     local SELF_PATH="/usr/local/bin/mailcow-setup-run"
@@ -96,6 +141,7 @@ install_manager() {
 MARKER_FILE="/etc/mailcow-installed"
 INSTALL_DIR="/opt/mailcow-dockerized"
 LOG_FILE="/var/log/mailcow-setup.log"
+MAILCOW_MANAGER_VERSION="__SCRIPT_VERSION__"
 
 R='\033[0;31m' G='\033[0;32m' Y='\033[1;33m'
 B='\033[0;34m' C='\033[0;36m' M='\033[0;35m' N='\033[0m'
@@ -367,6 +413,7 @@ cmd_help() {
     echo -e "${C}╔═══════════════════════════════════════════════╗${N}"
     echo -e "${C}║          Mailcow Manager          ║${N}"
     echo -e "${C}╚═══════════════════════════════════════════════╝${N}"
+    echo -e "  ${B}Version:${N} ${Y}${MAILCOW_MANAGER_VERSION}${N}"
     echo ""
     echo -e "  ${Y}mailcow${N} ${G}<command>${N}"
     echo ""
@@ -396,6 +443,7 @@ case "${1:-help}" in
     *)               cmd_help ;;
 esac
 MANAGER
+    sed -i "s|__SCRIPT_VERSION__|$SCRIPT_VERSION|g" "$MANAGER_BIN"
     chmod +x "$MANAGER_BIN"
     log "Manager installed: mailcow <command>"
 }
@@ -518,11 +566,12 @@ run_install() {
 
     # ── banner ───────────────────────────────────────────────────────────────
     clear
-    local BANNER_WIDTH=54
+    local BANNER_WIDTH=60
     echo ""
     echo -e "${C}╔$(printf '%*s' "$BANNER_WIDTH" '' | tr ' ' '═')╗${N}"
     printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "✉  Mailcow Dockerized Setup Wizard"
     printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "github.com/digiboy367/mailcow-installer"
+    printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "Version ${SCRIPT_VERSION}"
     echo -e "${C}╚$(printf '%*s' "$BANNER_WIDTH" '' | tr ' ' '═')╝${N}"
     echo ""
 
@@ -987,7 +1036,7 @@ bootstrap() {
     install_self_runner
 
     local SELF_PATH="/usr/local/bin/mailcow-setup-run"
-    local SCRIPT_URL="https://raw.githubusercontent.com/digiboy367/mailcow-installer/refs/heads/main/mailcow-setup.sh"
+    local SCRIPT_URL="${SCRIPT_URL_BASE}?nocache=$(date +%s)"
 
     # ── save script to disk ─────────────────────────────────────────────
     if [ ! -f "$SELF_PATH" ]; then
@@ -1022,7 +1071,10 @@ bootstrap() {
 }
 
 # ── dispatch based on how script is invoked ───────────────────────────────────
-case "${1:-bootstrap}" in
+MODE="${1:-bootstrap}"
+self_update_from_github "$MODE"
+
+case "$MODE" in
     install)
         install_manager
         install_motd
