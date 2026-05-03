@@ -460,14 +460,14 @@ remove_bashrc_hook() {
 install_deps() {
     log "Installing system dependencies …"
     if command -v apt-get &>/dev/null; then
-        apt-get update -qq
+        apt-get update -qq >>"$LOG_FILE" 2>&1
         apt-get install -y git openssl curl gawk coreutils grep jq python3 python3-bcrypt \
-            dnsutils 2>>"$LOG_FILE" || \
+            dnsutils >>"$LOG_FILE" 2>&1 || \
         apt-get install -y git openssl curl gawk coreutils grep jq python3 \
-            dnsutils 2>>"$LOG_FILE" || true
+            dnsutils >>"$LOG_FILE" 2>&1 || true
     elif command -v dnf &>/dev/null; then
         dnf install -y git openssl curl gawk coreutils grep jq python3 python3-bcrypt \
-            bind-utils 2>>"$LOG_FILE" || true
+            bind-utils >>"$LOG_FILE" 2>&1 || true
     fi
 
     # Docker
@@ -504,11 +504,12 @@ run_install() {
 
     # ── banner ───────────────────────────────────────────────────────────────
     clear
+    local BANNER_WIDTH=54
     echo ""
-    echo -e "${C}╔══════════════════════════════════════════════════════╗${N}"
-    echo -e "${C}║${N}   ${M}✉  Mailcow Dockerized Setup Wizard${N}               ${C}║${N}"
-    echo -e "${C}║${N}      github.com/digiboy367/mailcow-installer       ${C}║${N}"
-    echo -e "${C}╚══════════════════════════════════════════════════════╝${N}"
+    echo -e "${C}╔$(printf '%*s' "$BANNER_WIDTH" '' | tr ' ' '═')╗${N}"
+    printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "✉  Mailcow Dockerized Setup Wizard"
+    printf "${C}║${N} %-*s ${C}║${N}\n" "$BANNER_WIDTH" "github.com/digiboy367/mailcow-installer"
+    echo -e "${C}╚$(printf '%*s' "$BANNER_WIDTH" '' | tr ' ' '═')╝${N}"
     echo ""
 
     # ── already installed? ───────────────────────────────────────────────────
@@ -647,14 +648,11 @@ run_install() {
     hr
     DETECTED_TZ=$(timedatectl show -p Timezone --value 2>/dev/null \
         || cat /etc/timezone 2>/dev/null || echo "UTC")
-    echo ""
-    echo -e "  Detected: ${C}${DETECTED_TZ}${N}"
-    read -rp "  Timezone [${DETECTED_TZ}]: " MAILCOW_TZ
-    MAILCOW_TZ="${MAILCOW_TZ:-$DETECTED_TZ}"
+    MAILCOW_TZ="$DETECTED_TZ"
     [ -f "/usr/share/zoneinfo/$MAILCOW_TZ" ] || \
         python3 -c "import zoneinfo; zoneinfo.ZoneInfo('$MAILCOW_TZ')" 2>/dev/null || \
         { warn "Timezone '$MAILCOW_TZ' not validated, continuing anyway."; }
-    log "Timezone: $MAILCOW_TZ"
+    info "Timezone auto-set: $MAILCOW_TZ"
 
     # ─────────────────────────────────────────────────────────────────────────
     #  STEP 5 – BRANCH & OPTIONS
@@ -662,32 +660,12 @@ run_install() {
     hr
     echo -e "${Y}  Step 5/6 – Branch & Options${N}"
     hr
-    echo ""
-    echo -e "  Branch:  ${G}1) master${N} (stable, recommended)  ${B}2) nightly${N} (testing)"
-    read -rp "  Select [1]: " br_choice
-    case "${br_choice:-1}" in
-        2) MAILCOW_BRANCH="nightly" ;;
-        *) MAILCOW_BRANCH="master"  ;;
-    esac
-
-    echo ""
-    TOTAL_RAM_MB=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
-    echo -e "  RAM: ${C}${TOTAL_RAM_MB} MB${N}"
-    [ "$TOTAL_RAM_MB" -lt 3072 ] && \
-        warn "Less than 3 GB RAM – ClamAV (needs ~1 GB) will be disabled by default."
-    CLAMAV_DEF=$( [ "$TOTAL_RAM_MB" -ge 3072 ] && echo "Y" || echo "N" )
-    read -rp "  Enable ClamAV antivirus? [${CLAMAV_DEF}]: " clam_in
-    clam_in="${clam_in:-$CLAMAV_DEF}"
-    [[ "$clam_in" =~ ^[Yy]$ ]] && SKIP_CLAMD="n" || SKIP_CLAMD="y"
-
-    echo ""
-    IPV6_AVAIL="n"
-    ip -6 addr show scope global 2>/dev/null | grep -q inet6 && IPV6_AVAIL="y"
-    echo -e "  IPv6 detected: ${C}${IPV6_AVAIL}${N}"
-    IPV6_DEF=$( [ "$IPV6_AVAIL" = "y" ] && echo "Y" || echo "N" )
-    read -rp "  Enable IPv6? [${IPV6_DEF}]: " ipv6_in
-    ipv6_in="${ipv6_in:-$IPV6_DEF}"
-    [[ "$ipv6_in" =~ ^[Yy]$ ]] && MAILCOW_IPV6="y" || MAILCOW_IPV6="n"
+    MAILCOW_BRANCH="master"
+    SKIP_CLAMD="y"
+    MAILCOW_IPV6="n"
+    info "Branch auto-set: $MAILCOW_BRANCH"
+    info "ClamAV auto-set: disabled"
+    info "IPv6 auto-set: disabled"
 
     # ─────────────────────────────────────────────────────────────────────────
     #  STEP 6 – CONFIRM
@@ -807,10 +785,12 @@ CONF
 
     # ── pull & start ──────────────────────────────────────────────────────────
     hr; echo -e "${Y}  Pulling Docker images (this may take a while) …${N}"; hr
-    $COMPOSE pull 2>&1 | tee -a "$LOG_FILE"
+    $COMPOSE pull >>"$LOG_FILE" 2>&1
+    log "Docker images pulled."
 
     hr; echo -e "${Y}  Starting Mailcow …${N}"; hr
-    $COMPOSE up -d 2>&1 | tee -a "$LOG_FILE"
+    $COMPOSE up -d >>"$LOG_FILE" 2>&1
+    log "Mailcow containers started."
 
     # ── wait for mysql to be ready ────────────────────────────────────────────
     log "Waiting for MySQL to be ready …"
@@ -862,13 +842,24 @@ CONF
 
     # ── generate API key ──────────────────────────────────────────────────────
     MC_API_KEY=$(gen_token 32)
-    $COMPOSE exec -T mysql-mailcow mysql \
+    if $COMPOSE exec -T mysql-mailcow mysql \
         -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
         -e "DELETE FROM api WHERE username='${MC_ADMIN_USER}'; \
             INSERT INTO api (username,api_key,active,allow_from) \
             VALUES('${MC_ADMIN_USER}','${MC_API_KEY}','1','127.0.0.1/32,::1/128');" \
-        >>"$LOG_FILE" 2>&1 && log "API key saved." \
-        || { warn "Could not save API key."; MC_API_KEY=""; }
+        >>"$LOG_FILE" 2>&1; then
+        log "API key saved."
+    elif $COMPOSE exec -T mysql-mailcow mysql \
+        -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
+        -e "DELETE FROM api WHERE username='${MC_ADMIN_USER}'; \
+            INSERT INTO api (active,api_key,allow_from,access,description,username) \
+            VALUES(1,'${MC_API_KEY}','127.0.0.1/32,::1/128','rw','Installer API key','${MC_ADMIN_USER}');" \
+        >>"$LOG_FILE" 2>&1; then
+        log "API key saved."
+    else
+        warn "Could not save API key. Domain will be added via SQL fallback."
+        MC_API_KEY=""
+    fi
 
     # ── add mail domain ───────────────────────────────────────────────────────
     hr; echo -e "${Y}  Adding mail domain ${MAIL_DOMAIN} …${N}"; hr
@@ -880,11 +871,30 @@ CONF
             -H "X-API-Key: ${MC_API_KEY}" \
             -d "{\"domain\":\"${MAIL_DOMAIN}\",\"description\":\"Primary domain\",\"aliases\":400,\"mailboxes\":10,\"defquota\":3072,\"maxquota\":10240,\"quota\":10240,\"active\":\"1\",\"rl_value\":10,\"rl_frame\":\"s\",\"backupmx\":\"0\",\"relay_all_recipients\":\"0\"}" \
             2>/dev/null || echo "curl_failed")
-        echo "$domain_resp" | grep -qi '"type":"success"' \
-            && log "Domain ${MAIL_DOMAIN} added." \
-            || warn "Domain add response: ${domain_resp}"
+        if echo "$domain_resp" | grep -qi '"type":"success"'; then
+            log "Domain ${MAIL_DOMAIN} added."
+        else
+            warn "Domain API add failed, trying SQL fallback."
+            $COMPOSE exec -T mysql-mailcow mysql \
+                -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
+                -e "INSERT IGNORE INTO domain \
+                    (domain,description,aliases,mailboxes,defquota,maxquota,quota,active,rl_value,rl_frame,backupmx,relay_all_recipients) \
+                    VALUES \
+                    ('${MAIL_DOMAIN}','Primary domain',400,10,3072,10240,10240,1,10,'s',0,0);" \
+                >>"$LOG_FILE" 2>&1 \
+                && log "Domain ${MAIL_DOMAIN} added via SQL fallback." \
+                || warn "Domain add failed. Response: ${domain_resp}"
+        fi
     else
-        warn "Skipping API domain add (no API key). Add ${MAIL_DOMAIN} manually in the web UI."
+        $COMPOSE exec -T mysql-mailcow mysql \
+            -u"${DBUSER}" -p"${DBPASS}" "${DBNAME}" \
+            -e "INSERT IGNORE INTO domain \
+                (domain,description,aliases,mailboxes,defquota,maxquota,quota,active,rl_value,rl_frame,backupmx,relay_all_recipients) \
+                VALUES \
+                ('${MAIL_DOMAIN}','Primary domain',400,10,3072,10240,10240,1,10,'s',0,0);" \
+            >>"$LOG_FILE" 2>&1 \
+            && log "Domain ${MAIL_DOMAIN} added via SQL fallback." \
+            || warn "Skipping domain add (API key unavailable and SQL fallback failed)."
     fi
 
     # ── write marker ──────────────────────────────────────────────────────────
@@ -919,13 +929,13 @@ EOF
     echo -e "${Y}  Required DNS Records for ${MAIL_DOMAIN}${N}"
     hr
     echo ""
-    printf "  %-24s %-8s %-8s %s\n" "Name" "Type" "TTL" "Value"
-    printf "  %-24s %-8s %-8s %s\n" "────────────────────" "────" "───" "──────────────────────"
-    printf "  %-24s %-8s %-8s %s\n" "${MAILCOW_HOSTNAME}." "A"    "3600" "${SERVER_IP}"
-    printf "  %-24s %-8s %-8s %s\n" "${MAIL_DOMAIN}."      "MX"   "3600" "10 ${MAILCOW_HOSTNAME}."
-    printf "  %-24s %-8s %-8s %s\n" "autoconfig.${MAIL_DOMAIN}." "CNAME" "3600" "${MAILCOW_HOSTNAME}."
-    printf "  %-24s %-8s %-8s %s\n" "autodiscover.${MAIL_DOMAIN}." "CNAME" "3600" "${MAILCOW_HOSTNAME}."
-    printf "  %-24s %-8s %-8s %s\n" "_dmarc.${MAIL_DOMAIN}." "TXT" "3600" "v=DMARC1; p=reject; rua=mailto:dmarc@${MAIL_DOMAIN}"
+    printf "  %-36s %-7s %-6s %s\n" "Name" "Type" "TTL" "Value"
+    printf "  %-36s %-7s %-6s %s\n" "------------------------------------" "-------" "------" "-----------------------------------------------"
+    printf "  %-36s %-7s %-6s %s\n" "${MAILCOW_HOSTNAME}." "A" "3600" "${SERVER_IP}"
+    printf "  %-36s %-7s %-6s %s\n" "${MAIL_DOMAIN}." "MX" "3600" "10 ${MAILCOW_HOSTNAME}."
+    printf "  %-36s %-7s %-6s %s\n" "autoconfig.${MAIL_DOMAIN}." "CNAME" "3600" "${MAILCOW_HOSTNAME}."
+    printf "  %-36s %-7s %-6s %s\n" "autodiscover.${MAIL_DOMAIN}." "CNAME" "3600" "${MAILCOW_HOSTNAME}."
+    printf "  %-36s %-7s %-6s %s\n" "_dmarc.${MAIL_DOMAIN}." "TXT" "3600" "v=DMARC1; p=reject; rua=mailto:dmarc@${MAIL_DOMAIN}"
     echo ""
     echo -e "  ${B}DKIM & SPF${N}: generated inside Mailcow → Configuration → Domains → DNS"
     echo ""
