@@ -29,6 +29,19 @@ die()   { error "$*"; exit 1; }
 
 hr()    { echo -e "${C}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${N}"; }
 
+install_self_runner() {
+    local SELF_PATH="/usr/local/bin/mailcow-setup-run"
+    local SELF_SRC="${BASH_SOURCE[0]:-}"
+
+    [ "$EUID" -eq 0 ] || return 0
+    [ -n "$SELF_SRC" ] || return 0
+    [ -r "$SELF_SRC" ] || return 0
+
+    # Keep the managed runner in sync with the script currently being executed.
+    cp -f "$SELF_SRC" "$SELF_PATH" 2>>"$LOG_FILE" || return 0
+    chmod +x "$SELF_PATH" 2>>"$LOG_FILE" || true
+}
+
 # ── detect compose command ────────────────────────────────────────────────────
 detect_compose() {
     if docker compose version &>/dev/null 2>&1; then
@@ -501,6 +514,7 @@ run_install() {
 
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
+    install_self_runner
 
     # ── banner ───────────────────────────────────────────────────────────────
     clear
@@ -970,6 +984,7 @@ bootstrap() {
 
     mkdir -p "$(dirname "$LOG_FILE")"
     touch "$LOG_FILE"
+    install_self_runner
 
     local SELF_PATH="/usr/local/bin/mailcow-setup-run"
     local SCRIPT_URL="https://raw.githubusercontent.com/digiboy367/mailcow-installer/refs/heads/main/mailcow-setup.sh"
