@@ -15,7 +15,7 @@ LOG_FILE="/var/log/mailcow-setup.log"
 MANAGER_BIN="/usr/local/bin/mailcow"
 MOTD_FILE="/etc/update-motd.d/99-mailcow"
 BASHRC_MARKER="# mailcow-auto-install-hook"
-SCRIPT_VERSION="2026.05.03.3"
+SCRIPT_VERSION="2026.05.03.4"
 SCRIPT_URL_BASE="https://raw.githubusercontent.com/digiboy367/mailcow-installer/main/mailcow-setup.sh"
 
 # ── colours ───────────────────────────────────────────────────────────────────
@@ -39,6 +39,7 @@ version_gt() {
 
 self_update_from_github() {
     local mode="${1:-bootstrap}"
+    shift || true
     local self_path="/usr/local/bin/mailcow-setup-run"
     local remote_url="${SCRIPT_URL_BASE}?nocache=$(date +%s)"
     local tmp remote_version
@@ -68,7 +69,7 @@ self_update_from_github() {
         chmod +x "$self_path" 2>>"$LOG_FILE" || true
         rm -f "$tmp"
         info "Installer updated. Relaunching version ${remote_version} …"
-        exec bash "$self_path" "$mode"
+        exec bash "$self_path" "$mode" "$@"
     fi
 
     rm -f "$tmp"
@@ -126,6 +127,58 @@ length = int(sys.argv[1])
 alphabet = string.ascii_letters + string.digits
 print(''.join(secrets.choice(alphabet) for _ in range(length)), end='')
 PY
+}
+
+resolve_hostname_a_records() {
+    local hostname="$1"
+
+    if command -v getent &>/dev/null; then
+        getent ahostsv4 "$hostname" 2>/dev/null | awk '{print $1}' | sort -u
+        return 0
+    fi
+
+    if command -v dig &>/dev/null; then
+        dig +short A "$hostname" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | sort -u
+        return 0
+    fi
+
+    if command -v host &>/dev/null; then
+        host -t A "$hostname" 2>/dev/null | awk '/ has address / {print $4}' | sort -u
+        return 0
+    fi
+
+    return 1
+}
+
+check_hostname_points_to_server_ip() {
+    local hostname="$1" server_ip="$2"
+    local resolved_ips=""
+
+    if [ "${FORCE_DNS_CHECK:-0}" = "1" ]; then
+        warn "Skipping hostname A record check because -f/--force was provided."
+        return 0
+    fi
+
+    resolved_ips=$(resolve_hostname_a_records "$hostname" | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | sed 's/^ //; s/ $//')
+
+    if [ -n "$resolved_ips" ] && echo " $resolved_ips " | grep -q " ${server_ip} "; then
+        info "A record check passed: ${hostname} resolves to ${server_ip}."
+        return 0
+    fi
+
+    echo ""
+    error "Hostname DNS check failed."
+    echo -e "  Hostname: ${Y}${hostname}${N}"
+    echo -e "  Expected A record IP: ${Y}${server_ip}${N}"
+    echo -e "  Current resolved A records: ${Y}${resolved_ips:-none}${N}"
+    echo ""
+    echo "Add or fix this DNS record, then run install again:"
+    echo "  ${hostname}.    IN A    ${server_ip}"
+    echo ""
+    echo "To bypass this check intentionally, run:"
+    echo "  mailcow install -f"
+    echo ""
+    exit 1
 }
 
 domain_exists_sql() {
@@ -319,7 +372,7 @@ cmd_status() {
 
 cmd_install() {
     # Delegate to the main setup script
-    bash /usr/local/bin/mailcow-setup-run install
+    bash /usr/local/bin/mailcow-setup-run install "$@"
 }
 
 cmd_uninstall() {
@@ -460,7 +513,7 @@ cmd_help() {
     echo ""
     echo -e "  ${Y}mailcow${N} ${G}<command>${N}"
     echo ""
-    echo -e "  ${G}install${N}           Run the installation wizard"
+    echo -e "  ${G}install [-f]${N}      Run the installation wizard (-f skips A record check)"
     echo -e "  ${G}uninstall${N}         Stop & remove all Mailcow data"
     echo -e "  ${G}reinstall${N}         Uninstall then re-install"
     echo -e "  ${G}status${N}            Show status and container info"
@@ -474,7 +527,7 @@ cmd_help() {
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
 case "${1:-help}" in
-    install)         cmd_install ;;
+    install)         shift; cmd_install "$@" ;;
     uninstall)       cmd_uninstall ;;
     reinstall)       cmd_reinstall ;;
     status)          cmd_status ;;
@@ -671,6 +724,8 @@ run_install() {
             && break
         error "  Not a valid FQDN. Must contain at least one dot."
     done
+
+    check_hostname_points_to_server_ip "$MAILCOW_HOSTNAME" "$SERVER_IP"
 
     # Update OS hostname if changed
     if [ "$MAILCOW_HOSTNAME" != "$CURRENT_HOSTNAME" ]; then
@@ -1108,8 +1163,26 @@ bootstrap() {
 }
 
 # ── dispatch based on how script is invoked ───────────────────────────────────
+ORIGINAL_ARGS=("$@")
 MODE="${1:-bootstrap}"
-self_update_from_github "$MODE"
+FORCE_DNS_CHECK=0
+
+if [ "$MODE" = "install" ]; then
+    shift || true
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--force)
+                FORCE_DNS_CHECK=1
+                ;;
+            *)
+                warn "Unknown install option: $1 (ignored)"
+                ;;
+        esac
+        shift
+    done
+fi
+
+self_update_from_github "$MODE" "${ORIGINAL_ARGS[@]:1}"
 
 case "$MODE" in
     install)
